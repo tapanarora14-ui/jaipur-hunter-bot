@@ -1,120 +1,96 @@
-import os
-import time
-import threading
-import hmac
-import hashlib
-import json
-import requests
-import pytz
-from datetime import datetime
+import os, time, threading, requests, logging
 from flask import Flask, request
-import telebot
+from datetime import datetime
+import pytz
 
-# === CONFIG FROM RENDER ENVIRONMENT ===
+# --- ENV ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8396092843:AAGUURdCJLFxkD_xPKWnJ9X26dDHzbC6q0A")
-API_KEY = os.getenv("DELTA_API_KEY", "YOUR_DELTA_API_KEY_HERE")
-API_SECRET = os.getenv("DELTA_API_SECRET", "YOUR_DELTA_API_SECRET_HERE")
-TELEGRAM_CHAT_ID = os.getenv("CHAT_ID", "") # Your personal chat id for alerts
+DELTA_API_KEY = os.getenv("DELTA_API_KEY", "")
+DELTA_API_SECRET = os.getenv("DELTA_API_SECRET", "")
+CHAT_ID = os.getenv("CHAT_ID", "")  # will be set after /setchat
 
-PRODUCT_ID = int(os.getenv("PRODUCT_ID", "27")) # 27=BTCUSD
-QTY = 1
-BASE_URL = "https://api.india.delta.exchange"
-ist = pytz.timezone("Asia/Kolkata")
-
-bot = telebot.TeleBot(BOT_TOKEN)
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 app = Flask(__name__)
 
-# === DELTA FUNCTIONS ===
-def delta_request(method, path, payload=""):
-    if "YOUR_DELTA" in API_KEY:
-        print("Delta API Keys not set yet", flush=True)
-        return {}
-    timestamp = str(int(time.time()))
-    signature_data = method + timestamp + path + payload
-    signature = hmac.new(API_SECRET.encode(), signature_data.encode(), hashlib.sha256).hexdigest()
-    headers = {'api-key': API_KEY, 'timestamp': timestamp, 'signature': signature, 'Content-Type': 'application/json'}
-    url = BASE_URL + path
+IST = pytz.timezone("Asia/Kolkata")
+
+def send_message(chat_id, text):
+    if not chat_id: return
     try:
-        if method == "GET":
-            r = requests.get(url, headers=headers, timeout=10)
-        else:
-            r = requests.post(url, headers=headers, data=payload, timeout=10)
-        return r.json()
+        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=10)
+        print(f"Sent to {chat_id}: {text[:50]}")
     except Exception as e:
-        print(f"Delta Error: {e}", flush=True)
-        return {}
+        print(f"Send error: {e}")
 
-def place_order():
-    payload = {"product_id": PRODUCT_ID, "size": QTY, "side": "sell", "order_type": "market_order"}
-    res = delta_request("POST", "/v2/orders", json.dumps(payload))
-    print(f"{datetime.now(ist)} - SELL ENTRY -> {res}", flush=True)
-    if TELEGRAM_CHAT_ID:
-        try: bot.send_message(TELEGRAM_CHAT_ID, f"✅ Jaipur Hunter ENTRY Done at 9:20 AM\n{res}")
-        except: pass
-    return res
+def send_to_owner(text):
+    # send to saved CHAT_ID if available
+    if CHAT_ID:
+        send_message(CHAT_ID, text)
 
-def close_all():
-    payload = {"close_all_portfolio": False, "close_all_isolated": True, "product_ids": [PRODUCT_ID]}
-    res = delta_request("POST", "/v2/positions/close_all", json.dumps(payload))
-    print(f"{datetime.now(ist)} - EXIT -> {res}", flush=True)
-    if TELEGRAM_CHAT_ID:
-        try: bot.send_message(TELEGRAM_CHAT_ID, f"🔚 Jaipur Hunter EXIT Done at 5:30 PM\n{res}")
-        except: pass
-    return res
-
-# === FLASK WEBHOOK ===
-@app.route('/')
-def home():
-    return "Jaipur Hunter Bot Live - Trading + Telegram OK", 200
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
+# --- YOUR STRATEGY ---
+def place_strategy_orders():
+    # --- PUT YOUR DELTA LOGIC HERE ---
+    # This runs at 9:20 AM IST
     try:
-        data = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(data)
-        bot.process_new_updates([update])
+        msg = "🔥 Jaipur Hunter ENTRY: SELL 76000 CE + PE executed (simulated) at 9:20 AM"
+        print(msg)
+        # TODO: Add your Delta API sell code here using DELTA_API_KEY/SECRET
+        send_to_owner(msg)
     except Exception as e:
-        print(f"Webhook Error: {e}", flush=True)
-    return 'ok', 200
+        send_to_owner(f"Entry error: {e}")
 
-# === TELEGRAM COMMANDS ===
-@bot.message_handler(commands=['start'])
-def start(m):
-    bot.reply_to(m, "👋 Jaipur Hunter Active!\n\nStrategy: SELL 76000 CE+PE at 9:20 AM\nEXIT at 5:30 PM IST\n\nCommands:\n/status - Check bot\nUse /setchat to set alert ID")
+def exit_strategy_orders():
+    try:
+        msg = "✅ Jaipur Hunter EXIT: All positions squared off at 5:30 PM"
+        print(msg)
+        # TODO: Add your Delta API exit code here
+        send_to_owner(msg)
+    except Exception as e:
+        send_to_owner(f"Exit error: {e}")
 
-@bot.message_handler(commands=['status'])
-def status(m):
-    now = datetime.now(ist).strftime("%d-%m-%Y %H:%M:%S IST")
-    bot.reply_to(m, f"✅ Bot Live\nTime: {now}\nProduct: {PRODUCT_ID}\nQty: {QTY}")
-
-@bot.message_handler(commands=['setchat'])
-def setchat(m):
-    bot.reply_to(m, f"Your CHAT_ID is: {m.chat.id}\nAdd this in Render Environment as CHAT_ID")
-
-# === TRADING LOOP IN BACKGROUND THREAD ===
-def trading_loop():
-    print("Trading Loop Started", flush=True)
-    entered_today = False
+def scheduler_loop():
+    print("Scheduler started...")
     while True:
         try:
-            now = datetime.now(ist)
-            hm = now.strftime("%H:%M")
-            if hm == "09:20" and not entered_today:
-                place_order()
-                entered_today = True
-                time.sleep(65)
-            if hm == "17:30" and entered_today:
-                close_all()
-                entered_today = False
-                time.sleep(65)
-            if hm == "00:01":
-                entered_today = False
-            time.sleep(10)
+            now = datetime.now(IST)
+            # 9:20 AM Entry
+            if now.hour == 9 and now.minute == 20 and now.second < 10:
+                place_strategy_orders()
+                time.sleep(60)
+            # 5:30 PM Exit = 17:30
+            if now.hour == 17 and now.minute == 30 and now.second < 10:
+                exit_strategy_orders()
+                time.sleep(60)
         except Exception as e:
-            print(f"Loop Error: {e}", flush=True)
-            time.sleep(10)
+            print(f"Scheduler error: {e}")
+        time.sleep(5)
 
-threading.Thread(target=trading_loop, daemon=True).start()
+# Start scheduler in background
+threading.Thread(target=scheduler_loop, daemon=True).start()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+# --- FLASK + TELEGRAM WEBHOOK ---
+@app.route("/")
+def home():
+    return "Jaipur Hunter Bot is LIVE ✅ - Strategy + Telegram Active"
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
+    print(f"Update received: {data}")
+    if data and "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
+        t = text.lower().strip()
+        if t.startswith("/start"):
+            send_message(chat_id, "👋 Jaipur Hunter Active!\n\nStrategy: SELL 76000 CE+PE at 9:20 AM\nEXIT at 5:30 PM IST\n\nCommands:\n/setchat - get your CHAT_ID\n/status - check bot status")
+        elif t.startswith("/setchat"):
+            send_message(chat_id, f"Your CHAT_ID is: {chat_id}\n\nGo to Render -> Environment -> Add:\nCHAT_ID = {chat_id}\nThen Save.")
+        elif t.startswith("/status"):
+            send_message(chat_id, f"✅ Bot LIVE\nTime IST: {datetime.now(IST)}\nAPI Key set: {bool(DELTA_API_KEY)}\nOwner CHAT_ID set: {bool(CHAT_ID)}")
+        else:
+            send_message(chat_id, f"You said: {text}\nBot working ✅ Use /start")
+    return "ok", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

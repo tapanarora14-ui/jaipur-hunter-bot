@@ -1,3 +1,22 @@
+import os
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Jaipur Hunter Bot LIVE - Monitoring Jaipur!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# Start web server for Render
+Thread(target=run_web, daemon=True).start()
+
+# --- YOUR BOT CODE STARTS BELOW ---
+
 import os, time, requests
 from datetime import datetime
 import pytz

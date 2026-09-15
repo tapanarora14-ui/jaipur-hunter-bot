@@ -1,42 +1,29 @@
 import os
-from flask import Flask
-from threading import Thread
+from flask import Flask, request
+import telebot
 
+BOT_TOKEN = "8396092843:AAGUURdCJLFxkD_xPKWnJ9X26dDHzbC6q0A"
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
+
+@bot.message_handler(commands=['start'])
+def start(m):
+    bot.reply_to(m, "🏹 Jaipur Hunter Bot LIVE!\n\nYour bot is WORKING ✅\n\nSend /hunt")
+
+@bot.message_handler(func=lambda m: True)
+def echo(m):
+    bot.reply_to(m, f"You: {m.text}\nBot ONLINE ✅")
 
 @app.route('/')
 def home():
-    return "Jaipur Hunter Bot LIVE - Monitoring Jaipur!"
+    return "Jaipur Hunter Bot Running!"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'ok', 200
 
-# Start web server for Render
-Thread(target=run_web, daemon=True).start()
-
-# --- YOUR BOT CODE STARTS BELOW ---
-
-import os, time, requests
-from datetime import datetime
-import pytz
-
-API_KEY = os.getenv("DELTA_KEY")
-API_SECRET = os.getenv("DELTA_SECRET")
-
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
-
-def send_telegram(msg):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    except:
-        pass
-
-print("Jaipur Hunter Bot Started - Safe Mode")
-ist = pytz.timezone('Asia/Kolkata')
-while True:
-    now = datetime.now(ist).strftime("%H:%M:%S")
-    print(f"Bot running... {now} - Waiting for setup")
-    time.sleep(60)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
